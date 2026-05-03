@@ -1,7 +1,7 @@
-
-
 local audio = {}
+
 local dfpwm = require("cc.audio.dfpwm")
+
 local _world    = nil
 local _player   = nil
 local _settings = nil
@@ -152,7 +152,12 @@ local MENU_SONGS = {
     { id = "_4MvHGw62CI", name = "Damned 100ae"                   },
 }
 
-local menuStream = newStream()
+local menuStream   = newStream()
+local eeStream     = newStream()
+local jingleStream = newStream()
+jingleStream.currentPerk = nil
+jingleStream.cooldown    = 0
+
 local menuState = {
     songIndex    = 1,
     songName     = "",
@@ -219,8 +224,6 @@ function audio.isEESongPlaying() return eeStream.playing end
 function audio.isMenuMusicPlaying() return menuStream.playing end
 function audio.getMenuSongName()    return menuState.songName  end
 
-local eeStream = newStream()
-
 function audio.startEESong()
     local mapData = _world and _world.loader and _world.loader.currentMap
     if not mapData or not mapData.eeSongId then return false end
@@ -237,10 +240,6 @@ function audio.updateEESong(dt)
     local vol     = (_settings and _settings.sfxVolume) or 1.0
     updateStream(eeStream, speaker, vol)
 end
-
-local jingleStream = newStream()
-jingleStream.currentPerk = nil
-jingleStream.cooldown    = 0
 
 local JINGLE_RANGE    = 10
 local JINGLE_RANGE_SQ = JINGLE_RANGE * JINGLE_RANGE
