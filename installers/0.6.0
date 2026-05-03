@@ -1,0 +1,295 @@
+--CC ZOMBIES 0.6 INSTALLER!@!!@!$@!32wr9ahfeofnaeunhfeuanfuenhfau
+local VERSION    = "0.6"
+local BASE_URL   = "https://raw.githubusercontent.com/DrNightheart/CC-Zombies-Repo/refs/heads/main/0.6/"
+local PINE3D_CMD = "pastebin run qpJYiYs2"
+local FILES = {
+    "CCZombies/audio.lua",
+    "CCZombies/background.nfp",
+    "CCZombies/characters/AliceE.nfp",
+    "CCZombies/characters/Ariss_Nightheart.nfp",
+    "CCZombies/characters/DrNightheart.nfp",
+    "CCZombies/characters/bayard.nfp",
+    "CCZombies/dlc.lua",
+    "CCZombies/entity.lua",
+    "CCZombies/game.lua",
+    "CCZombies/hud.lua",
+    "CCZombies/logo.nfp",
+    "CCZombies/menu.lua",
+    "CCZombies/nav.lua",
+    "CCZombies/paths.lua",
+    "CCZombies/player.lua",
+    "CCZombies/settings.lua",
+    "CCZombies/ui.lua",
+    "CCZombies/utilities.lua",
+    "CCZombies/voxel.lua",
+    "CCZombies/weapon.lua",
+    "CCZombies/world.lua",
+    "CCZombies/zombie.lua",
+    "guns/ak47_AliceE.nfp",
+    "guns/ak47_ArissNightheart.nfp",
+    "guns/ak47_Bayard.nfp",
+    "guns/ak47_DrNightheart.nfp",
+    "guns/ballista_sniper_AliceE.nfp",
+    "guns/ballista_sniper_ArissNightheart.nfp",
+    "guns/ballista_sniper_Bayard.nfp",
+    "guns/ballista_sniper_DrNightheart.nfp",
+    "guns/m1911_AliceE.nfp",
+    "guns/m1911_ArissNightheart.nfp",
+    "guns/m1911_Bayard.nfp",
+    "guns/m1911_DrNightheart.nfp",
+    "guns/raygun_AliceE.nfp",
+    "guns/raygun_ArissNightheart.nfp",
+    "guns/raygun_Bayard.nfp",
+    "guns/raygun_DrNightheart.nfp",
+    "guns/standard_lmg_AliceE.nfp",
+    "guns/standard_lmg_ArissNightheart.nfp",
+    "guns/standard_lmg_Bayard.nfp",
+    "guns/standard_lmg_DrNightheart.nfp",
+    "guns/uzi_md_AliceE.nfp",
+    "guns/uzi_md_ArissNightheart.nfp",
+    "guns/uzi_md_Bayard.nfp",
+    "guns/uzi_md_DrNightheart.nfp",
+    "maps/NachtDerUntoten.ccz",
+    "maps/Nuketown1975.ccz",
+    "CCZombiesLauncher.lua",
+}
+
+local W, H = term.getSize()
+
+local function cls()
+    term.setBackgroundColor(colors.black)
+    term.setTextColor(colors.white)
+    term.clear()
+    term.setCursorPos(1, 1)
+end
+
+local function centerText(y, text, col)
+    term.setCursorPos(math.floor((W - #text) / 2) + 1, y)
+    if col then term.setTextColor(col) end
+    term.write(text)
+    term.setTextColor(colors.white)
+end
+
+local function drawHeader()
+    term.setBackgroundColor(colors.red)
+    term.setTextColor(colors.white)
+    for y = 1, 3 do
+        term.setCursorPos(1, y); term.clearLine()
+    end
+    centerText(2, "CC:ZOMBIES " .. VERSION .. " INSTALLER", colors.white)
+    term.setBackgroundColor(colors.black)
+    term.setCursorPos(1, 4)
+end
+
+local function drawBar(y, filled, total, width)
+    width = width or (W - 4)
+    local n = math.floor(filled / total * width)
+    term.setCursorPos(3, y)
+    term.setBackgroundColor(colors.red)
+    term.write(string.rep(" ", n))
+    term.setBackgroundColor(colors.gray)
+    term.write(string.rep(" ", width - n))
+    term.setBackgroundColor(colors.black)
+end
+
+local function prompt(y, question, options)
+    local sel = 1
+    while true do
+        term.setCursorPos(1, y)
+        term.clearLine()
+        term.setTextColor(colors.yellow)
+        term.write(question)
+        for i, opt in ipairs(options) do
+            term.setCursorPos(3, y + i)
+            term.clearLine()
+            if i == sel then
+                term.setBackgroundColor(colors.red)
+                term.setTextColor(colors.white)
+                term.write(" > " .. opt.label .. " ")
+                term.setBackgroundColor(colors.black)
+            else
+                term.setTextColor(colors.lightGray)
+                term.write("   " .. opt.label)
+            end
+        end
+        term.setTextColor(colors.white)
+
+        local _, key = os.pullEvent("key")
+        if key == keys.up   then sel = math.max(1, sel - 1)
+        elseif key == keys.down  then sel = math.min(#options, sel + 1)
+        elseif key == keys.enter then return sel
+        end
+    end
+end
+
+local function checkPine3D()
+    if fs.exists("Pine3D") or fs.exists("Pine3D.lua") then
+        return true
+    end
+    -- try require to be sure
+    local ok = pcall(require, "Pine3D")
+    return ok
+end
+
+local function installPine3D()
+    cls(); drawHeader()
+    centerText(5, "Pine3D not found! (could be outside of common areas))", colors.orange)
+    centerText(6, "Running the Pine3D installer now...", colors.lightGray)
+    centerText(8, "This may take a moment.", colors.lightGray)
+    sleep(1.5)
+    shell.run(PINE3D_CMD)
+    sleep(0.5)
+    if not checkPine3D() then
+        cls(); drawHeader()
+        centerText(5, "Pine3D installation may have failed.", colors.red)
+        centerText(6, "Please run manually:  " .. PINE3D_CMD, colors.yellow)
+        centerText(8, "Press any key to continue anyway...", colors.lightGray)
+        os.pullEvent("key")
+        return false
+    end
+    return true
+end
+local function ensureDir(path)
+    local parts = {}
+    for seg in path:gmatch("[^/]+") do parts[#parts+1] = seg end
+    local cur = ""
+    for i = 1, #parts - 1 do
+        cur = cur .. (i > 1 and "/" or "") .. parts[i]
+        if not fs.exists(cur) then fs.makeDir(cur) end
+    end
+end
+
+local function downloadFile(url, dest, binary)
+    local r = http.get(url, nil, binary)
+    if not r then return false, "HTTP request failed" end
+    local data = r.readAll(); r.close()
+    ensureDir(dest)
+    local mode = binary and "wb" or "w"
+    local f = fs.open(dest, mode)
+    if not f then return false, "Could not open " .. dest .. " for writing" end
+    f.write(data); f.close()
+    return true
+end
+
+local function isBinary(path)
+    -- nfp and ccz are text, lua is text, everything here is text. Why did i include this? idk.
+    return false
+end
+
+local function install(variant)
+    -- variant: "commentless" or "minified"
+    local total  = #FILES
+    local failed = {}
+
+    cls(); drawHeader()
+    centerText(5, "Installing " .. variant .. " build...", colors.lightGray)
+
+    for i, relpath in ipairs(FILES) do
+        local url  = BASE_URL .. variant .. "/" .. relpath
+        local dest = relpath  -- install relative to root
+
+        -- progress bar
+        term.setCursorPos(1, 7)
+        term.clearLine()
+        local label = relpath:match("[^/]+$") or relpath
+        local displayLabel = label
+        if #displayLabel > W - 6 then displayLabel = displayLabel:sub(1, W - 9) .. "..." end
+        term.setTextColor(colors.lightGray)
+        term.write("  " .. displayLabel)
+        drawBar(9, i - 1, total)
+        term.setCursorPos(1, 10)
+        term.clearLine()
+        term.setTextColor(colors.lightGray)
+        local pct = string.format("%d / %d  (%d%%)", i, total, math.floor((i-1)/total*100))
+        term.setCursorPos(math.floor((W - #pct) / 2) + 1, 10)
+        term.write(pct)
+
+        local ok, err = downloadFile(url, dest)
+        if not ok then
+            failed[#failed+1] = {file = relpath, err = err}
+        end
+    end
+
+    -- final bar at 100%
+    drawBar(9, total, total)
+    term.setCursorPos(1, 10)
+    term.clearLine()
+    local pct = string.format("%d / %d  (100%%)", total, total)
+    term.setCursorPos(math.floor((W - #pct) / 2) + 1, 10)
+    term.setTextColor(colors.white)
+    term.write(pct)
+
+    return failed
+end
+
+-- meow
+cls()
+drawHeader()
+
+-- Sizes 
+local SIZE_COMMENTLESS = 298933
+local SIZE_MINIFIED    = 234750--do note that this isnt the SUPER MINIFIED version.
+
+local function kb(n) return string.format("%.1f KB", n / 1024) end
+
+-- Variant selection screen
+centerText(5,  "Choose a version to install:", colors.yellow)
+
+centerText(7,  "Commentless" .. kb(SIZE_COMMENTLESS), colors.white)
+centerText(8,  "Readable code incase i screwed up.", colors.lightGray)
+
+centerText(10, "Minified" .. kb(SIZE_MINIFIED), colors.white)
+local saved = math.floor((SIZE_COMMENTLESS - SIZE_MINIFIED) / 1024)
+centerText(11, "saves " .. saved .. " KB. Could be unstable..", colors.lightGray)
+
+local choice = prompt(13, "Select with arrows, confirm with Enter:", {
+    {label = "Commentless  (" .. kb(SIZE_COMMENTLESS) .. ")"},
+    {label = "Minified     (" .. kb(SIZE_MINIFIED)    .. ")"},
+})
+
+local variant = (choice == 1) and "commentless" or "minified"
+
+-- Pine3D check
+cls(); drawHeader()
+centerText(5, "Checking for Pine3D...", colors.lightGray)
+sleep(0.3)
+
+if not checkPine3D() then
+    installPine3D()
+end
+
+-- Download
+local failed = install(variant)
+
+-- Result screen
+cls(); drawHeader()
+
+if #failed == 0 then
+    centerText(5, "Installation complete!", colors.lime)
+    centerText(6, "CC:Zombies " .. VERSION .. " (" .. variant .. ") is ready.", colors.lightGray)
+    centerText(8, "Run:  CCZombiesLauncher", colors.yellow)
+    centerText(9, "or add it to your startup.lua to auto-launch.", colors.lightGray)
+else
+    centerText(5, "Installed with " .. #failed .. " error(s):", colors.orange)
+    local y = 7
+    for _, e in ipairs(failed) do
+        if y <= H - 2 then
+            term.setCursorPos(3, y)
+            term.setTextColor(colors.red)
+            local short = e.file:match("[^/]+$") or e.file
+            term.write("- " .. short .. ": " .. (e.err or "unknown error"))
+            y = y + 1
+        end
+    end
+    term.setTextColor(colors.white)
+    centerText(H - 1, "You may need to re-run the installer.", colors.yellow)
+end
+
+term.setCursorPos(1, H)
+term.setTextColor(colors.lightGray)
+term.write("Press any key to exit")
+os.pullEvent("key")
+term.setTextColor(colors.white)
+term.setBackgroundColor(colors.black)
+term.clear()
+term.setCursorPos(1, 1)
