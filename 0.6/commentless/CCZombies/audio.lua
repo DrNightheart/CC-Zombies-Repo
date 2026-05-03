@@ -1,7 +1,7 @@
 
 
 local audio = {}
-
+local dfpwm = require("cc.audio.dfpwm")
 local _world    = nil
 local _player   = nil
 local _settings = nil
