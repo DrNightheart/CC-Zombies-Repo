@@ -1,1 +1,1007 @@
-local game={}local paths=require"CCZombies.paths"local P=require"CCZombies.player"local settings=require"CCZombies.settings"local menu=require"CCZombies.menu"local world=require"CCZombies.world"local nav=require"CCZombies.nav"local weapon=require"CCZombies.weapon"local zombie=require"CCZombies.zombie"local entity=require"CCZombies.entity"local audio=require"CCZombies.audio"local hud=require"CCZombies.hud"local voxel=require"CCZombies.voxel"local dlc=require"CCZombies.dlc"local Pine3D=require"Pine3D"local frame=nil local function applyFOV()local fov=(cfg and cfg.fov)or 70 if not frame then frame=Pine3D.newFrame()end if frame.setFOV then frame.setFOV(fov)end end applyFOV()local player=P.state local cfg=settings.current local keysDown={}local keysJustPressed={}local zombies={}local roundState={currentRound=0,zombiesTotal=0,zombiesSpawned=0,zombiesKilled=0,lastSpawnTime=0,spawnDelay=2.0,active=false,}local roundTransition={phase=nil,round=0,startTime=0,clearDur=3.5,incomeDur=3.0,}local boxRoll={active=false,done=false,elapsed=0,spinTimer=0,duration=4.0,doneDur=2.5,doneTimer=0,display="",chosen=nil,}local renderedObjects={}local function getRO()return renderedObjects end local targetRotY=0 local targetRotZ=0 local isSprinting=false local stamina=1.0 local gameState="main_menu"local VERSION="0.6.0"local availableMaps={}local pauseOption=1 local function getCurrentTime()return os.epoch("utc")/1000 end local ccz={}ccz.game={announce=function(text,dur)hud.queueAnnounce(text,dur)end,getState=function()return gameState end,setState=function(s)gameState=s end,getPlayer=function()return player end,}ccz.animation={_defs={},define=function(name,def)ccz.animation._defs[name]=def end,newState=function(name,initial)local def=ccz.animation._defs[name]if not def then return nil end return{defName=name,state=initial or"idle",frame=1,timer=0}end,setState=function(state,anim)if state then state.state=anim;state.frame=1;state.timer=0 end end,update=function(state,dt)if not state then return 1 end local def=ccz.animation._defs[state.defName]if not def then return 1 end local anim=def[state.state]if not anim then return 1 end state.timer=state.timer+dt local frameDur=1/(anim.fps or 4)if state.timer>=frameDur then state.timer=0 local frames=anim.frames or{1}state.frame=state.frame+1 if state.frame>#frames then if anim.loop then state.frame=1 elseif anim.onEnd then ccz.animation.setState(state,anim.onEnd)else state.frame=#frames end end return frames[math.min(state.frame,#frames)]end local frames=anim.frames or{1}return frames[math.min(state.frame,#frames)]end,}ccz.boss={_defs={},_spawnHook=nil,register=function(t,d)ccz.boss._defs[t]=d end,getDef=function(t)return ccz.boss._defs[t]end,isBoss=function(z)return ccz.boss._defs[z.type]~=nil end,_getAllDefs=function()return ccz.boss._defs end,setSpawnHook=function(fn)ccz.boss._spawnHook=fn end,setZombiesRef=function(_)end,spawn=function(t,pos)local def=ccz.boss._defs[t]if not def then return nil end local boss={x=pos.x,y=pos.y,z=pos.z,type=t,health=0,maxHealth=0,speed=def.speed or 0.14,state="walk",velocityY=0,onGround=true,height=2.2,animState=nil,currentFrame=1,animTimer=0,}if def.onSpawn then pcall(def.onSpawn,boss)end if ccz.boss._spawnHook then ccz.boss._spawnHook(boss)end return boss end,update=function(boss,dt,prevHealth)local def=ccz.boss._defs[boss.type]if not def or not def.phases then return end local pct=boss.maxHealth>0 and(boss.health/boss.maxHealth)or 0 local prevPct=boss.maxHealth>0 and(prevHealth/boss.maxHealth)or 0 for _,phase in ipairs(def.phases)do if pct<=phase.healthPct and prevPct>phase.healthPct then if phase.onEnter then pcall(phase.onEnter,boss)end if phase.state and boss.animState then ccz.animation.setState(boss.animState,phase.state)end if phase.speed then boss.speed=phase.speed end break end end end,}ccz.map=world.groupAPI ccz.fx={flash=function(r,g,b,dur)hud.setScreenFlash(r,g,b,dur)end,shake=function(dur,mag)voxel.triggerShake(dur,mag)end,}ccz.palette={_saved={},reset=function()for i=0,15 do local c=2^i local r,g,b=term.getPaletteColor(c)ccz.palette._saved[c]={r,g,b}end end,}ccz.weapons={getDef=function(id)return weapon.getWeaponDef(id)end,register=function(def)weapon.registerDef(def)end,createInstance=function(id)return weapon.createInstance(id)end,}ccz.palette.set=function(color,r,g,b)term.setPaletteColor(color,r,g,b)if hud._basePalette then hud._basePalette[color]={r,g,b}end end ccz.cutscene={play=function(_,opts)if opts and opts.onComplete then pcall(opts.onComplete)end end}ccz.sky={setColor=function(color)if frame and frame.setBackgroundColor then frame:setBackgroundColor(color)end end} ccz.IsInteractable=function(enabled,radius)return{_interactable=enabled~=false,_radius=tonumber(radius)or 3}end world.loader.setCCZ(ccz)local function buildMapAPI()return{showGroup=world.groupAPI.showGroup,hideGroup=world.groupAPI.hideGroup,swapGroups=world.groupAPI.swapGroups,announce=ccz.game.announce,fx=ccz.fx,getPlayer=ccz.game.getPlayer,getRound=function()return roundState.currentRound end,}end local function scanAvailableMaps()local names=world.loader.scanMaps()availableMaps={}for _,name in ipairs(names)do local path=paths.map(name)availableMaps[#availableMaps+1]={name=name,file=path,description="",}end for _,m in ipairs(availableMaps)do local f=fs.open(m.file,"r")if f then local first=f.readLine()or""f.close()local desc=first:match("description%s*=%s*\"([^\"]+)\"")if desc then m.description=desc end end end return availableMaps end local function injectMapEnv(fn)if not fn then return fn end local env=setmetatable({ccz=ccz,ccz_map=buildMapAPI()},{__index=_G})setfenv(fn,env)return fn end local function onMapUpdate(dt)local md=world.loader.currentMap if md and md.onUpdate then pcall(injectMapEnv(md.onUpdate),buildMapAPI(),dt)end end local function onMapRoundStart(round)local md=world.loader.currentMap if md and md.onRoundStart then pcall(injectMapEnv(md.onRoundStart),buildMapAPI(),round)end end local function onMapRoundEnd(round)local md=world.loader.currentMap if md and md.onRoundEnd then pcall(injectMapEnv(md.onRoundEnd),buildMapAPI(),round)end end local function onMapZombieKill(z,killer)local md=world.loader.currentMap if md and md.onZombieKill then pcall(injectMapEnv(md.onZombieKill),buildMapAPI(),z,killer)end end local function onPlayerInteract()local md=world.loader.currentMap if not md then return false end if md.interactables then for _,it in ipairs(md.interactables)do if it.bounds and world.isPlayerLookingAt(it.bounds,player)then if it.onActivate then pcall(injectMapEnv(it.onActivate),buildMapAPI())end return true end end end if md.scriptBlocks then for blockId,bd in pairs(md.scriptBlocks)do local tag=bd.interactable if not(tag and not tag._interactable)then if not bd.collected and bd.instances and bd.onInteract then local radiusSq=tag and(tag._radius*tag._radius)or 9 for _,inst in ipairs(bd.instances)do local ix=inst.x or inst[1]local iz=inst.z or inst[3]local dx=player.x-ix local dz=player.z-iz if dx*dx+dz*dz<radiusSq then bd.id=blockId local ok,err=pcall(injectMapEnv(bd.onInteract),bd,buildMapAPI())if not ok then hud.queueAnnounce("Script error: "..tostring(err),3)end return true end end end end end end return false end local function initModules()settings.load()cfg=settings.current settings.init({scrollMenu=menu.scrollMenu,applyFOV=function()applyFOV()world.init({player=player,nav=nav,frame=frame,ccz=ccz})voxel.init({player=player,world=world,ccz=ccz,audio=audio,frame=frame,getRenderedObjects=getRO})zombie.init({player=player,zombies=zombies,roundState=roundState,world=world,nav=nav,settings=cfg,getCurrentTime=getCurrentTime,ccz=ccz,frame=frame,onKill=onMapZombieKill})end,audio=audio,player=player,CHARACTERS=P.CHARACTERS,promptUsername=P.promptUsername,})weapon.init({player=player,playerModule=P,zombies=zombies,settings=cfg,ccz=ccz,hitMarkers=hud.getHitMarkers(),muzzleFlash={timer=0},getCurrentTime=getCurrentTime,})weapon.registerBuiltins()P.init({settings=cfg,ccz=ccz})world.init({player=player,nav=nav,frame=frame,ccz=ccz})nav.init({world=world,player=player})zombie.init({player=player,zombies=zombies,roundState=roundState,world=world,nav=nav,settings=cfg,getCurrentTime=getCurrentTime,ccz=ccz,frame=frame,onKill=onMapZombieKill,})entity.init({player=player,world=world,weapon=weapon,nav=nav,settings=cfg,ccz=ccz,getCurrentTime=getCurrentTime,})audio.init({world=world,player=player,settings=cfg,ccz=ccz})audio.linkPerkJingles(entity.PERK_JINGLES)voxel.init({player=player,world=world,ccz=ccz,audio=audio,frame=frame,getRenderedObjects=getRO,})hud.init({player=player,playerModule=P,weapon=weapon,entity=entity,roundState=roundState,roundTrans=roundTransition,boxRoll=boxRoll,zombies=zombies,world=world,settings=cfg,getCurrentTime=getCurrentTime,keyName=settings.keyName,})dlc.onMapListChanged=function()scanAvailableMaps()end local modsDir=paths.mod("")if fs.exists(modsDir)then for _,modName in ipairs(fs.list(modsDir))do local initPath=paths.mod(modName,"init.lua")if fs.exists(initPath)then local ok,err=pcall(dofile,initPath)if not ok then print("[CCMod] "..modName.." error: "..tostring(err))sleep(1)end end end end end local function handleMovement(dt,hasInteractPrompt)local wantSprint if cfg.sprintMode=="toggle"then wantSprint=isSprinting else wantSprint=keysDown[cfg.key_sprint]or keysDown[keys.rightShift]end wantSprint=wantSprint and not player.isDowned and not player.inAfterlife if wantSprint and stamina>0 then isSprinting=true stamina=math.max(0,stamina-dt*0.2)else isSprinting=false stamina=math.min(1.0,stamina+dt*(stamina>0 and 0.15 or 0.08))end local sprintMult=(isSprinting and stamina>0)and 1.6 or 1.0 local hasSU=false for _,pk in ipairs(player.perks)do if pk=="perk_staminup"then hasSU=true;break end end local moveSpeed=4*(hasSU and 1.2 or 1.0)*sprintMult local turnSpeed=cfg.sensitivity or 90 local invertY=cfg.invertLookY and-1 or 1 local eBlocked=hasInteractPrompt and cfg.key_interact==cfg.key_lookRight if keysDown[cfg.key_lookLeft]or keysDown[keys.left]then targetRotY=targetRotY-turnSpeed*dt end local rightKeyBlocked=eBlocked and keysDown[cfg.key_lookRight]and cfg.key_lookRight~=keys.right if(not rightKeyBlocked)and(keysDown[cfg.key_lookRight]or keysDown[keys.right])then targetRotY=targetRotY+turnSpeed*dt end if keysDown[cfg.key_lookDown]or keysDown[keys.down]then targetRotZ=math.max(-80,targetRotZ-turnSpeed*dt*invertY)end if keysDown[cfg.key_lookUp]or keysDown[keys.up]then targetRotZ=math.min(80,targetRotZ+turnSpeed*dt*invertY)end local shakeX=voxel.shakeOffset.x P.camera.rotY=P.camera.rotY+(targetRotY-P.camera.rotY)*10*dt P.camera.rotZ=P.camera.rotZ+((targetRotZ+(player.recoil or 0)+shakeX)-P.camera.rotZ)*10*dt player.rotY=P.camera.rotY player.rotZ=P.camera.rotZ-shakeX if player.recoil and player.recoil~=0 then player.recoil=math.abs(player.recoil)<0.01 and 0 or player.recoil-player.recoil*math.min(1,6*dt)end player.eyeHeight=player.isDowned and 0.4 or 1.4 local moveX,moveZ=0,0 local speedMult=player.isDowned and 0.4 or 1.0 if player.isDowned then if keysDown[cfg.key_forward]then moveX=math.cos(math.rad(player.rotY))moveZ=math.sin(math.rad(player.rotY))end else if keysDown[cfg.key_forward]then moveX=moveX+math.cos(math.rad(player.rotY))moveZ=moveZ+math.sin(math.rad(player.rotY))end if keysDown[cfg.key_backward]then moveX=moveX-math.cos(math.rad(player.rotY))moveZ=moveZ-math.sin(math.rad(player.rotY))end if keysDown[cfg.key_strafeLeft]then moveX=moveX+math.cos(math.rad(player.rotY-90))moveZ=moveZ+math.sin(math.rad(player.rotY-90))end if keysDown[cfg.key_strafeRight]then moveX=moveX+math.cos(math.rad(player.rotY+90))moveZ=moveZ+math.sin(math.rad(player.rotY+90))end end local mLen=math.sqrt(moveX*moveX+moveZ*moveZ)if mLen>0 then moveX=(moveX/mLen)*moveSpeed*speedMult*dt moveZ=(moveZ/mLen)*moveSpeed*speedMult*dt end local newX=player.x+moveX if not world.checkPlayerCollision(newX,player.y,player.z)then player.x=newX end local newZ=player.z+moveZ if not world.checkPlayerCollision(player.x,player.y,newZ)then player.z=newZ end local GRAVITY=-28 local JUMP_VEL=10 if keysJustPressed[cfg.key_jump]and player.onGround and not player.isDowned then player.velocityY=JUMP_VEL player.onGround=false end if player.onGround then player.velocityY=0 if not world.isBlockSolid(player.x,player.y-0.05,player.z)then player.onGround=false end else player.velocityY=player.velocityY+GRAVITY*dt local newY=player.y+player.velocityY*dt if player.velocityY<0 then if world.isBlockSolid(player.x,newY-0.05,player.z)then player.y=math.floor(newY-0.05)+1 player.velocityY=0 player.onGround=true else player.y=newY end else local headY=newY+(player.height or 2)-0.05 if world.isBlockSolid(player.x,headY,player.z)then player.velocityY=0 else player.y=newY end end end local now=getCurrentTime()if now-(player.lastHitTime or 0)>=4 then if player.health<player.maxHealth then player.health=math.min(player.maxHealth,player.health+25*dt)end end local camX=player.x local camZ=player.z local CAM_WALL_MARGIN=0.35 local pushProbes={{-1,0},{1,0},{0,-1},{0,1}}for _,p in ipairs(pushProbes)do local testX=camX+p[1]*CAM_WALL_MARGIN local testZ=camZ+p[2]*CAM_WALL_MARGIN if world.isBlockSolid(testX,player.y+player.eyeHeight,testZ)then camX=camX-p[1]*(CAM_WALL_MARGIN*0.5)camZ=camZ-p[2]*(CAM_WALL_MARGIN*0.5)end end P.camera.x=camX P.camera.y=player.y+player.eyeHeight P.camera.z=camZ frame:setCamera(P.camera)for k in pairs(keysJustPressed)do keysJustPressed[k]=nil end end local function handleInteractKey(nearCtx)local rh=entity.reviveHold local ph=entity.purchaseHold do local md=world.loader and world.loader.currentMap if md and md.scriptBlocks then for blockId,bd in pairs(md.scriptBlocks)do local tag=bd.interactable if not(tag and not tag._interactable)then if not bd.collected and bd.instances and bd.onInteract then local radiusSq=tag and(tag._radius*tag._radius)or 9 for _,inst in ipairs(bd.instances)do local ix=inst.x or inst[1]local iz=inst.z or inst[3]local dx=player.x-ix local dz=player.z-iz if dx*dx+dz*dz<radiusSq then if ph.active then return end local label=blockId:gsub("_"," "):gsub("(%a)([%w]*)",function(a,b)return a:upper()..b end)entity.startPurchaseHold("[HOLD E] "..label,function()bd.id=blockId local ok,err=pcall(injectMapEnv(bd.onInteract),bd,buildMapAPI())if not ok then hud.queueAnnounce("Script error: "..tostring(err),3)end end)return end end end end end end end if nearCtx.nearPower then entity.activatePowerSwitch(nearCtx.nearPower)return end if player.inAfterlife and entity.isNearWhosWhoBody()then rh.active=true rh.elapsed=0 rh.isWhosWho=true rh.target=nil return end if ph.active then return end if nearCtx.nearDoor then local door=nearCtx.nearDoor entity.startPurchaseHold("Open Door (-"..door.cost.." pts)",function()entity.openDoor(door)end)elseif nearCtx.nearPaP then entity.startPurchaseHold("Pack-a-Punch (-5000 pts)",function()entity.packAPunchWeapon()end)elseif nearCtx.nearPerk and not nearCtx.nearPerk.purchased then local m=nearCtx.nearPerk local cost=entity.getPerkCost(m.type)local name=m.type:gsub("perk_",""):gsub("_"," "):gsub("^%l",string.upper)entity.startPurchaseHold("Buy "..name.." (-"..(cost or"?").." pts)",function()entity.purchasePerkMachine(m)end)elseif nearCtx.nearBox then entity.startPurchaseHold("Mystery Box (-950 pts)",function()if entity.purchaseMysteryBox()and not boxRoll.active and not boxRoll.done then local pool=weapon.getBoxPool()local chosen=pool[math.random(#pool)]boxRoll.active=true boxRoll.elapsed=0 boxRoll.spinTimer=0 boxRoll.done=false boxRoll.chosen=chosen boxRoll.display="???"boxRoll.duration=4.0 boxRoll.doneDur=2.5 boxRoll.doneTimer=0 end end)elseif nearCtx.nearWallWeapon then local ww=nearCtx.nearWallWeapon local def=ccz.weapons.getDef(ww.weaponId)local name=(def and def.name)or ww.weaponId entity.startPurchaseHold(name.." (-"..ww.cost.." pts)",function()entity.purchaseWallWeapon(ww)end)else return end end local function startRoundTransition(phase,round)roundTransition.phase=phase roundTransition.round=round roundTransition.startTime=getCurrentTime()end local function updateRoundFlow(dt,now)if boxRoll.active then boxRoll.elapsed=boxRoll.elapsed+dt boxRoll.spinTimer=boxRoll.spinTimer+dt local progress=boxRoll.elapsed/boxRoll.duration local spinRate=0.18-math.sin(progress*math.pi)*0.14 if boxRoll.spinTimer>=spinRate then boxRoll.spinTimer=0 local pool=weapon.getBoxPool()boxRoll.display=pool[math.random(#pool)].name end if boxRoll.elapsed>=boxRoll.duration then boxRoll.active=false boxRoll.done=true boxRoll.doneTimer=0 boxRoll.display=boxRoll.chosen.name weapon.giveToPlayer(boxRoll.chosen.id)hud.queueAnnounce("Mystery Box: "..boxRoll.chosen.name.."!",2.5)end elseif boxRoll.done then boxRoll.doneTimer=boxRoll.doneTimer+dt if boxRoll.doneTimer>=boxRoll.doneDur then boxRoll.done=false boxRoll.display=""end end if roundTransition.phase then local elapsed=now-roundTransition.startTime if roundTransition.phase=="clear"then if elapsed>=roundTransition.clearDur then startRoundTransition("incoming",roundTransition.round)end elseif roundTransition.phase=="incoming"then if elapsed>=roundTransition.incomeDur then roundTransition.phase=nil local r=zombie.startNewRound()onMapRoundStart(r)end end end if roundState.active and zombie.isRoundComplete()and#zombies==0 then local r=roundState.currentRound hud.queueAnnounce("Round "..r.." Complete!",3)onMapRoundEnd(r)startRoundTransition("clear",r+1)roundState.active=false end end local function initGame(mapIndex)mapIndex=math.max(1,math.min(mapIndex or 1,#availableMaps))local selectedMap=availableMaps[mapIndex]if not selectedMap then term.clear();term.setCursorPos(1,1)term.setTextColor(colors.red)print("No maps installed. Use 'Download Maps' to get some!")hud.resetPaletteToDefaults();sleep(2);gameState="main_menu";return end audio.stopMenuMusic()local mapFileName=selectedMap.file:match("([^/]+)%.ccz$")or selectedMap.name local mapData,err=world.loader.loadMap(mapFileName)if not mapData then term.clear();term.setCursorPos(1,1)term.setTextColor(colors.red)print("Failed to load map: "..tostring(err))hud.resetPaletteToDefaults();sleep(2);gameState="main_menu";return end world.showLoadingScreen(mapFileName)world.reset()world.preBakeCollisions(mapData.meshes)world.bakeWorldChunks(mapData.meshes)world.loadEntities(mapData)nav.reset()voxel.reset()voxel.initialize()ccz.boss.setSpawnHook(function(boss)zombies[#zombies+1]=boss end)P.reset()player=P.state if not P.character then P.assignCharacter(1)end player.character=P.character local sx,sy,sz=world.findPlayerSpawn(mapData)sy=math.max(sy,1)player.x,player.y,player.z=sx,sy,sz P.camera.x=sx;P.camera.y=sy+1.4;P.camera.z=sz P.camera.rotY=0;P.camera.rotZ=0 frame:setCamera(P.camera)for k in pairs(keysDown)do keysDown[k]=nil end for k in pairs(keysJustPressed)do keysJustPressed[k]=nil end targetRotY=0;targetRotZ=0 isSprinting=false;stamina=1.0 entity.cancelPurchaseHold()entity.reviveHold.active=false;entity.reviveHold.elapsed=0 for k in pairs(roundState)do roundState[k]=nil end roundState.currentRound=0 roundState.zombiesTotal=0 roundState.zombiesSpawned=0 roundState.zombiesKilled=0 roundState.lastSpawnTime=0 roundState.spawnDelay=2.0 roundState.active=false roundTransition.phase=nil boxRoll.active=false;boxRoll.done=false boxRoll.elapsed=0;boxRoll.display="";boxRoll.chosen=nil hud.saveMapPalette()hud.clearGunCache()if mapData.onLoad then local ok,lerr=pcall(injectMapEnv(mapData.onLoad),buildMapAPI())if not ok then print("onLoad error: "..tostring(lerr));sleep(2)end end startRoundTransition("incoming",1)gameState="playing"end local function gameLoop()local lastTime=getCurrentTime()local updateTimer=os.startTimer(0.05)while gameState=="playing"do local event,p1,p2=os.pullEventRaw()if event=="timer"and p1==updateTimer then local now=getCurrentTime()local dt=math.min(now-lastTime,0.05)hud._lastDt=dt lastTime=now local function guarded(name,fn,...)local args={...}local ok,err=xpcall(function()fn(table.unpack(args))end,function(e)return"["..name.."]\n"..(debug and debug.traceback and debug.traceback(tostring(e),2)or tostring(e))end)if not ok then error(err,0)end end local nearCtx={nearDoor=entity.getNearestDoor(),nearPerk=entity.getNearestPerkMachine(),nearBox=entity.getNearestMysteryBox(),nearPaP=entity.getNearestPaP(),nearWallWeapon=entity.getNearestWallWeapon(),nearPower=entity.getNearestPowerSwitch(),stamina=stamina,isSprinting=isSprinting,reviveHold=entity.reviveHold,}local function isNearScriptBlock()local md=world.loader and world.loader.currentMap if not md or not md.scriptBlocks then return false end for blockId,bd in pairs(md.scriptBlocks)do local tag=bd.interactable if tag and not tag._interactable then elseif not bd.collected and bd.instances and bd.onInteract then local radiusSq=tag and(tag._radius*tag._radius)or 9 for _,inst in ipairs(bd.instances)do local ix=inst.x or inst[1]local iz=inst.z or inst[3]local dx=player.x-ix local dz=player.z-iz if dx*dx+dz*dz<radiusSq then return blockId end end end end return false end local nearScriptBlock=isNearScriptBlock()nearCtx.nearScriptBlock=nearScriptBlock or nil local hasPrompt=nearCtx.nearDoor or nearCtx.nearPerk or nearCtx.nearBox or nearCtx.nearPaP or nearCtx.nearWallWeapon or nearCtx.nearPower or nearScriptBlockguarded("handleMovement",handleMovement,dt,hasPrompt)guarded("weapon.updateFiring",weapon.updateFiring,dt)guarded("entity.updateHolds",function()entity.updatePurchaseHold(dt)entity.updateReviveHold(dt)end)guarded("updateRoundFlow",updateRoundFlow,dt,now)guarded("audio.update",audio.update,dt)if player.inAfterlife then local af=now-(player.afterlifeStartTime or now)player.afterlifeTimeLeft=math.max(0,30-af)if player.afterlifeTimeLeft<=0 then gameState="gameover"end end if player.isDowned then local bl=now-(player.downedTime or now)if bl>=(player.bleedoutTime or 30)then if not entity.applySoloQuickRevive(world.getPerkMachines())then gameState="gameover"end end end guarded("zombie.updateZombies",zombie.updateZombies,dt)guarded("onMapUpdate",onMapUpdate,dt)guarded("voxel.updateShake",voxel.updateShake,dt)renderedObjects={}guarded("world.renderMap",world.renderMap,renderedObjects)guarded("world.renderEntities",function()world.renderPerkMachines(renderedObjects)world.renderPapMachines(renderedObjects)world.renderPowerSwitches(renderedObjects)world.renderMysteryBoxes(renderedObjects)end)guarded("zombie.renderAllZombies",zombie.renderAllZombies,renderedObjects)guarded("voxel.renderZombies",voxel.renderZombies,zombies,dt)guarded("frame.drawObjects",function()frame:drawObjects(renderedObjects)end)guarded("frame.drawBuffer",function()frame:drawBuffer()end)if player.isDowned then local bl=now-(player.downedTime or now)local prog=bl/(player.bleedoutTime or 30)guarded("hud.applyDownedPalette",hud.applyDownedPalette,prog)else guarded("hud.reapplyMapPalette",hud.reapplyMapPalette)end guarded("hud.updateScreenFlash",hud.updateScreenFlash)guarded("hud.drawHUD",hud.drawHUD,nearCtx)guarded("audio.drawNowPlaying",audio.drawNowPlaying)updateTimer=os.startTimer(0.05)elseif event=="http_success"then audio.onHttpSuccess(p1,p2)elseif event=="http_failure"then elseif event=="key"then keysDown[p1]=true keysJustPressed[p1]=true if p1==cfg.key_pause then gameState="paused"pauseOption=1 elseif p1==cfg.key_sprint and cfg.sprintMode=="toggle"then isSprinting=not isSprinting elseif p1==cfg.key_interact then local nearCtx2={nearDoor=entity.getNearestDoor(),nearPerk=entity.getNearestPerkMachine(),nearBox=entity.getNearestMysteryBox(),nearPaP=entity.getNearestPaP(),nearWallWeapon=entity.getNearestWallWeapon(),nearPower=entity.getNearestPowerSwitch(),}handleInteractKey(nearCtx2)elseif p1==cfg.key_melee then weapon.performMelee()elseif p1==cfg.key_slot1 then weapon.switchSlot(1)elseif p1==cfg.key_slot2 then weapon.switchSlot(2)elseif p1==cfg.key_slot3 then weapon.switchSlot(3)elseif p1==cfg.key_reload then weapon.reloadWeapon()elseif p1==(cfg.key_eeSong or keys.k)then if audio.isEESongPlaying and audio.isEESongPlaying()then audio.stopEESong()else audio.startEESong()end end elseif event=="key_up"then keysDown[p1]=nil if p1==cfg.key_interact then entity.cancelPurchaseHold()entity.reviveHold.active=false entity.reviveHold.elapsed=0 end elseif event=="mouse_click"and p1==1 then player.firing=true player.firedOnThisClick=false elseif event=="mouse_up"and p1==1 then player.firing=false player.firedOnThisClick=false elseif event=="terminate"then return"quit"end end end local function runPauseMenu()while gameState=="paused"do local choice=menu.scrollMenu({title="PAUSED",allowBack=true,items={{label="Resume",sub="Return to game"},{label="Settings",sub="Change settings"},{label="Quit",sub="Return to main menu",color=colors.red},},})if not choice or choice==1 then gameState="playing"elseif choice==2 then settings.showMenu()elseif choice==3 then hud.resetPaletteToDefaults()audio.stopMenuMusic()audio.stopEESong()gameState="main_menu"return end end end local function runGameOver()hud.resetPaletteToDefaults()hud.drawGameOver(world.loader.currentMap and world.loader.currentMap.name)while true do local ev,k=os.pullEvent("key")if k==keys.enter or k==keys.space then break end end audio.startMenuMusic()gameState="main_menu"end local function runMainMenu()local action=menu.showMainMenu()if action=="play"then local playAction=menu.showPlayMenu()if playAction=="solo"then gameState="map_select"end elseif action=="character"then local char=menu.showCharacterSelect()if char then P.character=char player.character=char settings.current.preferredCharacter=char.id settings.save()hud.clearGunCache()end elseif action=="settings"then menu.showSettings(settings)elseif action=="maps"then gameState="dlc"elseif action==nil then audio.stopMenuMusic()term.setBackgroundColor(colors.black);term.clear()term.setCursorPos(1,1)term.setTextColor(colors.white)print("Thanks for playing CCZombies!")sleep(1)gameState="quit"end end local function runMapSelect()if#availableMaps==0 then term.clear();term.setCursorPos(1,1)term.setTextColor(colors.yellow)print("No maps found. Go to 'Download Maps' to get some!")hud.resetPaletteToDefaults();sleep(2);gameState="main_menu";return end local items={}for _,m in ipairs(availableMaps)do items[#items+1]={label=m.name,sub=m.description~=""and m.description or m.file}end local choice=menu.scrollMenu({title="SELECT MAP",allowBack=true,items=items,footer="ENTER - Start  ` - Back",})if not choice then gameState="main_menu"else initGame(choice)end end local function startup()term.setBackgroundColor(colors.black);term.clear()settings.load()cfg=settings.current applyFOV()P.loadUsername()scanAvailableMaps()audio.startMenuMusic()initModules()end game.version=VERSION function game.run()startup()parallel.waitForAny(audio.speakerLoop,function()while gameState~="quit"do if gameState=="main_menu"then runMainMenu()elseif gameState=="map_select"then runMapSelect()elseif gameState=="playing"then gameLoop()elseif gameState=="paused"then runPauseMenu()elseif gameState=="gameover"then runGameOver()elseif gameState=="dlc"then dlc.handle()gameState="main_menu"end end end)term.setBackgroundColor(colors.black)term.setTextColor(colors.white)term.clear();term.setCursorPos(1,1)end return game
+local game={}
+local paths=require "CCZombies.paths"
+local P=require "CCZombies.player"
+local settings=require "CCZombies.settings"
+local menu=require "CCZombies.menu"
+local world=require "CCZombies.world"
+local nav=require "CCZombies.nav"
+local weapon=require "CCZombies.weapon"
+local zombie=require "CCZombies.zombie"
+local entity=require "CCZombies.entity"
+local audio=require "CCZombies.audio"
+local hud=require "CCZombies.hud"
+local voxel=require "CCZombies.voxel"
+local dlc=require "CCZombies.dlc"
+local Pine3D=require "Pine3D"
+local frame=nil
+local function applyFOV()
+ local fov=(cfg and cfg.fov)or 70
+ if not frame then
+ frame=Pine3D.newFrame()
+ end
+ if frame.setFOV then
+ frame.setFOV(fov)
+ end
+end
+applyFOV()
+local player=P.state
+local cfg=settings.current
+local keysDown={}
+local keysJustPressed={}
+local zombies={}
+local roundState={
+ currentRound=0,
+ zombiesTotal=0,
+ zombiesSpawned=0,
+ zombiesKilled=0,
+ lastSpawnTime=0,
+ spawnDelay=2.0,
+ active=false,
+}
+local roundTransition={
+ phase=nil,
+ round=0,
+ startTime=0,
+ clearDur=3.5,
+ incomeDur=3.0,
+}
+local boxRoll={
+ active=false,
+ done=false,
+ elapsed=0,
+ spinTimer=0,
+ duration=4.0,
+ doneDur=2.5,
+ doneTimer=0,
+ display="",
+ chosen=nil,
+}
+local renderedObjects={}
+local function getRO()return renderedObjects end
+local targetRotY=0
+local targetRotZ=0
+local isSprinting=false
+local stamina=1.0
+local gameState="main_menu"
+local VERSION="0.6.0"
+local availableMaps={}
+local pauseOption=1
+local function getCurrentTime()
+ return os.epoch("utc")/1000
+end
+local ccz={}
+ccz.game={
+ announce=function(text,dur)hud.queueAnnounce(text,dur)end,
+ getState=function()return gameState end,
+ setState=function(s)gameState=s end,
+ getPlayer=function()return player end,
+}
+ccz.animation={
+ _defs={},
+ define=function(name,def)ccz.animation._defs[name]=def end,
+ newState=function(name,initial)
+ local def=ccz.animation._defs[name]
+ if not def then return nil end
+ return{defName=name,state=initial or "idle",frame=1,timer=0}
+ end,
+ setState=function(state,anim)
+ if state then state.state=anim;state.frame=1;state.timer=0 end
+ end,
+ update=function(state,dt)
+ if not state then return 1 end
+ local def=ccz.animation._defs[state.defName]
+ if not def then return 1 end
+ local anim=def[state.state]
+ if not anim then return 1 end
+ state.timer=state.timer+dt
+ local frameDur=1/(anim.fps or 4)
+ if state.timer>=frameDur then
+ state.timer=0
+ local frames=anim.frames or{1}
+ state.frame=state.frame+1
+ if state.frame>#frames then
+ if anim.loop then
+ state.frame=1
+ elseif anim.onEnd then
+ ccz.animation.setState(state,anim.onEnd)
+ else
+ state.frame=#frames
+ end
+ end
+ return frames[math.min(state.frame,#frames)]
+ end
+ local frames=anim.frames or{1}
+ return frames[math.min(state.frame,#frames)]
+ end,
+}
+ccz.boss={
+ _defs={},
+ _spawnHook=nil,
+ register=function(t,d)ccz.boss._defs[t]=d end,
+ getDef=function(t)return ccz.boss._defs[t]end,
+ isBoss=function(z)return ccz.boss._defs[z.type]~=nil end,
+ _getAllDefs=function()return ccz.boss._defs end,
+ setSpawnHook=function(fn)ccz.boss._spawnHook=fn end,
+ setZombiesRef=function(_)end,
+ spawn=function(t,pos)
+ local def=ccz.boss._defs[t]
+ if not def then return nil end
+ local boss={
+ x=pos.x,y=pos.y,z=pos.z,type=t,
+ health=0,maxHealth=0,speed=def.speed or 0.14,
+ state="walk",velocityY=0,onGround=true,height=2.2,
+ animState=nil,currentFrame=1,animTimer=0,
+}
+ if def.onSpawn then pcall(def.onSpawn,boss)end
+ if ccz.boss._spawnHook then ccz.boss._spawnHook(boss)end
+ return boss
+ end,
+ update=function(boss,dt,prevHealth)
+ local def=ccz.boss._defs[boss.type]
+ if not def or not def.phases then return end
+ local pct=boss.maxHealth>0 and(boss.health/boss.maxHealth)or 0
+ local prevPct=boss.maxHealth>0 and(prevHealth/boss.maxHealth)or 0
+ for _,phase in ipairs(def.phases)do
+ if pct<=phase.healthPct and prevPct>phase.healthPct then
+ if phase.onEnter then pcall(phase.onEnter,boss)end
+ if phase.state and boss.animState then
+ ccz.animation.setState(boss.animState,phase.state)
+ end
+ if phase.speed then boss.speed=phase.speed end
+ break
+ end
+ end
+ end,
+}
+ccz.map=world.groupAPI
+ccz.fx={
+ flash=function(r,g,b,dur)hud.setScreenFlash(r,g,b,dur)end,
+ shake=function(dur,mag)voxel.triggerShake(dur,mag)end,
+}
+ccz.palette={
+ _saved={},
+ reset=function()
+ for i=0,15 do
+ local c=2^i
+ local r,g,b=term.getPaletteColor(c)
+ ccz.palette._saved[c]={r,g,b}
+ end
+ end,
+}
+ccz.weapons={
+ getDef=function(id)return weapon.getWeaponDef(id)end,
+ register=function(def)weapon.registerDef(def)end,
+ createInstance=function(id)return weapon.createInstance(id)end,
+}
+ccz.palette.set=function(color,r,g,b)
+ term.setPaletteColor(color,r,g,b)
+ if hud._basePalette then hud._basePalette[color]={r,g,b}end
+end
+ccz.cutscene={
+ play=function(_,opts)
+ if opts and opts.onComplete then pcall(opts.onComplete)end
+ end
+}
+ccz.sky={
+ setColor=function(color)
+ if frame and frame.setBackgroundColor then
+ frame:setBackgroundColor(color)
+ end
+ end,
+}
+ccz.IsInteractable=function(enabled,radius)
+ return{_interactable=enabled~=false,_radius=tonumber(radius)or 3}
+end
+world.loader.setCCZ(ccz)
+local function buildMapAPI()
+ return{
+ showGroup=world.groupAPI.showGroup,
+ hideGroup=world.groupAPI.hideGroup,
+ swapGroups=world.groupAPI.swapGroups,
+ announce=ccz.game.announce,
+ fx=ccz.fx,
+ getPlayer=ccz.game.getPlayer,
+ getRound=function()return roundState.currentRound end,
+}
+end
+local function scanAvailableMaps()
+ local names=world.loader.scanMaps()
+ availableMaps={}
+ for _,name in ipairs(names)do
+ local path=paths.map(name)
+ availableMaps[#availableMaps+1]={
+ name=name,
+ file=path,
+ description="",
+}
+ end
+ for _,m in ipairs(availableMaps)do
+ local f=fs.open(m.file,"r")
+ if f then
+ local first=f.readLine()or ""
+ f.close()
+ local desc=first:match("description%s*=%s*\"([^\"]+)\"")
+ if desc then m.description=desc end
+ end
+ end
+ return availableMaps
+end
+local function injectMapEnv(fn)
+ if not fn then return fn end
+ local env=setmetatable({ccz=ccz,ccz_map=buildMapAPI()},{__index=_G})
+ setfenv(fn,env)
+ return fn
+end
+local function onMapUpdate(dt)
+ local md=world.loader.currentMap
+ if md and md.onUpdate then
+ pcall(injectMapEnv(md.onUpdate),buildMapAPI(),dt)
+ end
+end
+local function onMapRoundStart(round)
+ local md=world.loader.currentMap
+ if md and md.onRoundStart then pcall(injectMapEnv(md.onRoundStart),buildMapAPI(),round)end
+end
+local function onMapRoundEnd(round)
+ local md=world.loader.currentMap
+ if md and md.onRoundEnd then pcall(injectMapEnv(md.onRoundEnd),buildMapAPI(),round)end
+end
+local function onMapZombieKill(z,killer)
+ local md=world.loader.currentMap
+ if md and md.onZombieKill then
+ pcall(injectMapEnv(md.onZombieKill),buildMapAPI(),z,killer)
+ end
+end
+local function onPlayerInteract()
+ local md=world.loader.currentMap
+ if not md then return false end
+ if md.interactables then
+ for _,it in ipairs(md.interactables)do
+ if it.bounds and world.isPlayerLookingAt(it.bounds,player)then
+ if it.onActivate then pcall(injectMapEnv(it.onActivate),buildMapAPI())end
+ return true
+ end
+ end
+ end
+ if md.scriptBlocks then
+ for blockId,bd in pairs(md.scriptBlocks)do
+ local tag=bd.interactable
+ if not(tag and not tag._interactable)then
+ if not bd.collected and bd.instances and bd.onInteract then
+ local radiusSq=tag and(tag._radius*tag._radius)or 9
+ for _,inst in ipairs(bd.instances)do
+ local ix=inst.x or inst[1]
+ local iz=inst.z or inst[3]
+ local dx=player.x-ix
+ local dz=player.z-iz
+ if dx*dx+dz*dz<radiusSq then
+ bd.id=blockId
+ local ok,err=pcall(injectMapEnv(bd.onInteract),bd,buildMapAPI())
+ if not ok then
+ hud.queueAnnounce("Script error: " .. tostring(err),3)
+ end
+ return true
+ end
+ end
+ end
+ end
+ end
+ end
+ return false
+end
+local function initModules()
+ settings.load()
+ cfg=settings.current
+ settings.init({
+ scrollMenu=menu.scrollMenu,
+ applyFOV=function()
+ applyFOV()
+ world.init({player=player,nav=nav,frame=frame,ccz=ccz})
+ voxel.init({player=player,world=world,ccz=ccz,audio=audio,
+ frame=frame,getRenderedObjects=getRO})
+ zombie.init({player=player,zombies=zombies,roundState=roundState,
+ world=world,nav=nav,settings=cfg,
+ getCurrentTime=getCurrentTime,ccz=ccz,frame=frame,
+ onKill=onMapZombieKill})
+ end,
+ audio=audio,
+ player=player,
+ CHARACTERS=P.CHARACTERS,
+ promptUsername=P.promptUsername,
+})
+ weapon.init({
+ player=player,
+ playerModule=P,
+ zombies=zombies,
+ settings=cfg,
+ ccz=ccz,
+ hitMarkers=hud.getHitMarkers(),
+ muzzleFlash={timer=0},
+ getCurrentTime=getCurrentTime,
+})
+ weapon.registerBuiltins()
+ P.init({settings=cfg,ccz=ccz})
+ world.init({player=player,nav=nav,frame=frame,ccz=ccz})
+ nav.init({world=world,player=player})
+ zombie.init({
+ player=player,
+ zombies=zombies,
+ roundState=roundState,
+ world=world,
+ nav=nav,
+ settings=cfg,
+ getCurrentTime=getCurrentTime,
+ ccz=ccz,
+ frame=frame,
+ onKill=onMapZombieKill,
+})
+ entity.init({
+ player=player,
+ world=world,
+ weapon=weapon,
+ nav=nav,
+ settings=cfg,
+ ccz=ccz,
+ getCurrentTime=getCurrentTime,
+})
+ audio.init({world=world,player=player,settings=cfg,ccz=ccz})
+ audio.linkPerkJingles(entity.PERK_JINGLES)
+ voxel.init({
+ player=player,
+ world=world,
+ ccz=ccz,
+ audio=audio,
+ frame=frame,
+ getRenderedObjects=getRO,
+})
+ hud.init({
+ player=player,
+ playerModule=P,
+ weapon=weapon,
+ entity=entity,
+ roundState=roundState,
+ roundTrans=roundTransition,
+ boxRoll=boxRoll,
+ zombies=zombies,
+ world=world,
+ settings=cfg,
+ getCurrentTime=getCurrentTime,
+ keyName=settings.keyName,
+})
+ dlc.onMapListChanged=function()scanAvailableMaps()end
+ local modsDir=paths.mod("")
+ if fs.exists(modsDir)then
+ for _,modName in ipairs(fs.list(modsDir))do
+ local initPath=paths.mod(modName,"init.lua")
+ if fs.exists(initPath)then
+ local ok,err=pcall(dofile,initPath)
+ if not ok then
+ print("[CCMod] " .. modName .. " error: " .. tostring(err))
+ sleep(1)
+ end
+ end
+ end
+ end
+end
+local function handleMovement(dt,hasInteractPrompt)
+ local wantSprint
+ if cfg.sprintMode=="toggle" then
+ wantSprint=isSprinting
+ else
+ wantSprint=keysDown[cfg.key_sprint]or keysDown[keys.rightShift]
+ end
+ wantSprint=wantSprint and not player.isDowned and not player.inAfterlife
+ if wantSprint and stamina>0 then
+ isSprinting=true
+ stamina=math.max(0,stamina-dt*0.2)
+ else
+ isSprinting=false
+ stamina=math.min(1.0,stamina+dt*(stamina>0 and 0.15 or 0.08))
+ end
+ local sprintMult=(isSprinting and stamina>0)and 1.6 or 1.0
+ local hasSU=false
+ for _,pk in ipairs(player.perks)do if pk=="perk_staminup" then hasSU=true;break end end
+ local moveSpeed=4*(hasSU and 1.2 or 1.0)*sprintMult
+ local turnSpeed=cfg.sensitivity or 90
+ local invertY=cfg.invertLookY and-1 or 1
+ local eBlocked=hasInteractPrompt and cfg.key_interact==cfg.key_lookRight
+ if keysDown[cfg.key_lookLeft]or keysDown[keys.left]then
+ targetRotY=targetRotY-turnSpeed*dt
+ end
+ local rightKeyBlocked=eBlocked and keysDown[cfg.key_lookRight]
+ and cfg.key_lookRight~=keys.right
+ if(not rightKeyBlocked)and(keysDown[cfg.key_lookRight]or keysDown[keys.right])then
+ targetRotY=targetRotY+turnSpeed*dt
+ end
+ if keysDown[cfg.key_lookDown]or keysDown[keys.down]then
+ targetRotZ=math.max(-80,targetRotZ-turnSpeed*dt*invertY)
+ end
+ if keysDown[cfg.key_lookUp]or keysDown[keys.up]then
+ targetRotZ=math.min(80,targetRotZ+turnSpeed*dt*invertY)
+ end
+ local shakeX=voxel.shakeOffset.x
+ P.camera.rotY=P.camera.rotY+(targetRotY-P.camera.rotY)*10*dt
+ P.camera.rotZ=P.camera.rotZ+(
+(targetRotZ+(player.recoil or 0)+shakeX)-P.camera.rotZ)*10*dt
+ player.rotY=P.camera.rotY
+ player.rotZ=P.camera.rotZ-shakeX
+ if player.recoil and player.recoil~=0 then
+ player.recoil=math.abs(player.recoil)<0.01 and 0
+ or player.recoil-player.recoil*math.min(1,6*dt)
+ end
+ player.eyeHeight=player.isDowned and 0.4 or 1.4
+ local moveX,moveZ=0,0
+ local speedMult=player.isDowned and 0.4 or 1.0
+ if player.isDowned then
+ if keysDown[cfg.key_forward]then
+ moveX=math.cos(math.rad(player.rotY))
+ moveZ=math.sin(math.rad(player.rotY))
+ end
+ else
+ if keysDown[cfg.key_forward]then
+ moveX=moveX+math.cos(math.rad(player.rotY))
+ moveZ=moveZ+math.sin(math.rad(player.rotY))
+ end
+ if keysDown[cfg.key_backward]then
+ moveX=moveX-math.cos(math.rad(player.rotY))
+ moveZ=moveZ-math.sin(math.rad(player.rotY))
+ end
+ if keysDown[cfg.key_strafeLeft]then
+ moveX=moveX+math.cos(math.rad(player.rotY-90))
+ moveZ=moveZ+math.sin(math.rad(player.rotY-90))
+ end
+ if keysDown[cfg.key_strafeRight]then
+ moveX=moveX+math.cos(math.rad(player.rotY+90))
+ moveZ=moveZ+math.sin(math.rad(player.rotY+90))
+ end
+ end
+ local mLen=math.sqrt(moveX*moveX+moveZ*moveZ)
+ if mLen>0 then
+ moveX=(moveX/mLen)*moveSpeed*speedMult*dt
+ moveZ=(moveZ/mLen)*moveSpeed*speedMult*dt
+ end
+ local newX=player.x+moveX
+ if not world.checkPlayerCollision(newX,player.y,player.z)then player.x=newX end
+ local newZ=player.z+moveZ
+ if not world.checkPlayerCollision(player.x,player.y,newZ)then player.z=newZ end
+ local GRAVITY=-28
+ local JUMP_VEL=10
+ if keysJustPressed[cfg.key_jump]and player.onGround and not player.isDowned then
+ player.velocityY=JUMP_VEL
+ player.onGround=false
+ end
+ if player.onGround then
+ player.velocityY=0
+ if not world.isBlockSolid(player.x,player.y-0.05,player.z)then
+ player.onGround=false
+ end
+ else
+ player.velocityY=player.velocityY+GRAVITY*dt
+ local newY=player.y+player.velocityY*dt
+ if player.velocityY<0 then
+ if world.isBlockSolid(player.x,newY-0.05,player.z)then
+ player.y=math.floor(newY-0.05)+1
+ player.velocityY=0
+ player.onGround=true
+ else
+ player.y=newY
+ end
+ else
+ local headY=newY+(player.height or 2)-0.05
+ if world.isBlockSolid(player.x,headY,player.z)then
+ player.velocityY=0
+ else
+ player.y=newY
+ end
+ end
+ end
+ local now=getCurrentTime()
+ if now-(player.lastHitTime or 0)>=4 then
+ if player.health<player.maxHealth then
+ player.health=math.min(player.maxHealth,player.health+25*dt)
+ end
+ end
+ local camX=player.x
+ local camZ=player.z
+ local CAM_WALL_MARGIN=0.35
+ local pushProbes={{-1,0},{1,0},{0,-1},{0,1}}
+ for _,p in ipairs(pushProbes)do
+ local testX=camX+p[1]*CAM_WALL_MARGIN
+ local testZ=camZ+p[2]*CAM_WALL_MARGIN
+ if world.isBlockSolid(testX,player.y+player.eyeHeight,testZ)then
+ camX=camX-p[1]*(CAM_WALL_MARGIN*0.5)
+ camZ=camZ-p[2]*(CAM_WALL_MARGIN*0.5)
+ end
+ end
+ P.camera.x=camX
+ P.camera.y=player.y+player.eyeHeight
+ P.camera.z=camZ
+ frame:setCamera(P.camera)
+ for k in pairs(keysJustPressed)do keysJustPressed[k]=nil end
+end
+local function handleInteractKey(nearCtx)
+ local rh=entity.reviveHold
+ local ph=entity.purchaseHold
+ do
+ local md=world.loader and world.loader.currentMap
+ if md and md.scriptBlocks then
+ for blockId,bd in pairs(md.scriptBlocks)do
+ local tag=bd.interactable
+ if not(tag and not tag._interactable)then
+ if not bd.collected and bd.instances and bd.onInteract then
+ local radiusSq=tag and(tag._radius*tag._radius)or 9
+ for _,inst in ipairs(bd.instances)do
+ local ix=inst.x or inst[1]
+ local iz=inst.z or inst[3]
+ local dx=player.x-ix
+ local dz=player.z-iz
+ if dx*dx+dz*dz<radiusSq then
+ if ph.active then return end
+ local label=blockId:gsub("_"," "):gsub("(%a)([%w]*)",function(a,b)return a:upper()..b end)
+ entity.startPurchaseHold("[HOLD E] " .. label,function()
+ bd.id=blockId
+ local ok,err=pcall(injectMapEnv(bd.onInteract),bd,buildMapAPI())
+ if not ok then hud.queueAnnounce("Script error: " .. tostring(err),3)end
+ end)
+ return
+ end
+ end
+ end
+ end
+ end
+ end
+ end
+ if nearCtx.nearPower then
+ entity.activatePowerSwitch(nearCtx.nearPower)
+ return
+ end
+ if player.inAfterlife and entity.isNearWhosWhoBody()then
+ rh.active=true
+ rh.elapsed=0
+ rh.isWhosWho=true
+ rh.target=nil
+ return
+ end
+ if ph.active then return end
+ if nearCtx.nearDoor then
+ local door=nearCtx.nearDoor
+ entity.startPurchaseHold(
+ "Open Door (-" .. door.cost .. " pts)",
+ function()entity.openDoor(door)end)
+ elseif nearCtx.nearPaP then
+ entity.startPurchaseHold(
+ "Pack-a-Punch (-5000 pts)",
+ function()entity.packAPunchWeapon()end)
+ elseif nearCtx.nearPerk and not nearCtx.nearPerk.purchased then
+ local m=nearCtx.nearPerk
+ local cost=entity.getPerkCost(m.type)
+ local name=m.type:gsub("perk_",""):gsub("_"," "):gsub("^%l",string.upper)
+ entity.startPurchaseHold(
+ "Buy " .. name .. " (-" ..(cost or "?").. " pts)",
+ function()entity.purchasePerkMachine(m)end)
+ elseif nearCtx.nearBox then
+ entity.startPurchaseHold(
+ "Mystery Box (-950 pts)",
+ function()
+ if entity.purchaseMysteryBox()and
+ not boxRoll.active and not boxRoll.done then
+ local pool=weapon.getBoxPool()
+ local chosen=pool[math.random(#pool)]
+ boxRoll.active=true
+ boxRoll.elapsed=0
+ boxRoll.spinTimer=0
+ boxRoll.done=false
+ boxRoll.chosen=chosen
+ boxRoll.display="???"
+ boxRoll.duration=4.0
+ boxRoll.doneDur=2.5
+ boxRoll.doneTimer=0
+ end
+ end)
+ elseif nearCtx.nearWallWeapon then
+ local ww=nearCtx.nearWallWeapon
+ local def=ccz.weapons.getDef(ww.weaponId)
+ local name=(def and def.name)or ww.weaponId
+ entity.startPurchaseHold(
+ name .. " (-" .. ww.cost .. " pts)",
+ function()entity.purchaseWallWeapon(ww)end)
+ else
+ return
+ end
+end
+local function startRoundTransition(phase,round)
+ roundTransition.phase=phase
+ roundTransition.round=round
+ roundTransition.startTime=getCurrentTime()
+end
+local function updateRoundFlow(dt,now)
+ if boxRoll.active then
+ boxRoll.elapsed=boxRoll.elapsed+dt
+ boxRoll.spinTimer=boxRoll.spinTimer+dt
+ local progress=boxRoll.elapsed/boxRoll.duration
+ local spinRate=0.18-math.sin(progress*math.pi)*0.14
+ if boxRoll.spinTimer>=spinRate then
+ boxRoll.spinTimer=0
+ local pool=weapon.getBoxPool()
+ boxRoll.display=pool[math.random(#pool)].name
+ end
+ if boxRoll.elapsed>=boxRoll.duration then
+ boxRoll.active=false
+ boxRoll.done=true
+ boxRoll.doneTimer=0
+ boxRoll.display=boxRoll.chosen.name
+ weapon.giveToPlayer(boxRoll.chosen.id)
+ hud.queueAnnounce("Mystery Box: " .. boxRoll.chosen.name .. "!",2.5)
+ end
+ elseif boxRoll.done then
+ boxRoll.doneTimer=boxRoll.doneTimer+dt
+ if boxRoll.doneTimer>=boxRoll.doneDur then
+ boxRoll.done=false
+ boxRoll.display=""
+ end
+ end
+ if roundTransition.phase then
+ local elapsed=now-roundTransition.startTime
+ if roundTransition.phase=="clear" then
+ if elapsed>=roundTransition.clearDur then
+ startRoundTransition("incoming",roundTransition.round)
+ end
+ elseif roundTransition.phase=="incoming" then
+ if elapsed>=roundTransition.incomeDur then
+ roundTransition.phase=nil
+ local r=zombie.startNewRound()
+ onMapRoundStart(r)
+ end
+ end
+ end
+ if roundState.active and zombie.isRoundComplete()and#zombies==0 then
+ local r=roundState.currentRound
+ hud.queueAnnounce("Round " .. r .. " Complete!",3)
+ onMapRoundEnd(r)
+ startRoundTransition("clear",r+1)
+ roundState.active=false
+ end
+end
+local function initGame(mapIndex)
+ mapIndex=math.max(1,math.min(mapIndex or 1,#availableMaps))
+ local selectedMap=availableMaps[mapIndex]
+ if not selectedMap then
+ term.clear();term.setCursorPos(1,1)
+ term.setTextColor(colors.red)
+ print("No maps installed. Use 'Download Maps' to get some!")
+ hud.resetPaletteToDefaults();sleep(2);gameState="main_menu";return
+ end
+ audio.stopMenuMusic()
+ local mapFileName=selectedMap.file:match("([^/]+)%.ccz$")or selectedMap.name
+ local mapData,err=world.loader.loadMap(mapFileName)
+ if not mapData then
+ term.clear();term.setCursorPos(1,1)
+ term.setTextColor(colors.red)
+ print("Failed to load map: " .. tostring(err))
+ hud.resetPaletteToDefaults();sleep(2);gameState="main_menu";return
+ end
+ world.showLoadingScreen(mapFileName)
+ world.reset()
+ world.preBakeCollisions(mapData.meshes)
+ world.bakeWorldChunks(mapData.meshes)
+ world.loadEntities(mapData)
+ nav.reset()
+ voxel.reset()
+ voxel.initialize()
+ ccz.boss.setSpawnHook(function(boss)zombies[#zombies+1]=boss end)
+ P.reset()
+ player=P.state
+ if not P.character then
+ P.assignCharacter(1)
+ end
+ player.character=P.character
+ local sx,sy,sz=world.findPlayerSpawn(mapData)
+ sy=math.max(sy,1)
+ player.x,player.y,player.z=sx,sy,sz
+ P.camera.x=sx;P.camera.y=sy+1.4;P.camera.z=sz
+ P.camera.rotY=0;P.camera.rotZ=0
+ frame:setCamera(P.camera)
+ for k in pairs(keysDown)do keysDown[k]=nil end
+ for k in pairs(keysJustPressed)do keysJustPressed[k]=nil end
+ targetRotY=0;targetRotZ=0
+ isSprinting=false;stamina=1.0
+ entity.cancelPurchaseHold()
+ entity.reviveHold.active=false;entity.reviveHold.elapsed=0
+ for k in pairs(roundState)do roundState[k]=nil end
+ roundState.currentRound=0
+ roundState.zombiesTotal=0
+ roundState.zombiesSpawned=0
+ roundState.zombiesKilled=0
+ roundState.lastSpawnTime=0
+ roundState.spawnDelay=2.0
+ roundState.active=false
+ roundTransition.phase=nil
+ boxRoll.active=false;boxRoll.done=false
+ boxRoll.elapsed=0;boxRoll.display="";boxRoll.chosen=nil
+ hud.saveMapPalette()
+ hud.clearGunCache()
+ if mapData.onLoad then
+ local ok,lerr=pcall(injectMapEnv(mapData.onLoad),buildMapAPI())
+ if not ok then
+ print("onLoad error: " .. tostring(lerr));sleep(2)
+ end
+ end
+ startRoundTransition("incoming",1)
+ gameState="playing"
+end
+local function gameLoop()
+ local lastTime=getCurrentTime()
+ local updateTimer=os.startTimer(0.05)
+ while gameState=="playing" do
+ local event,p1,p2=os.pullEventRaw()
+ if event=="timer" and p1==updateTimer then
+ local now=getCurrentTime()
+ local dt=math.min(now-lastTime,0.05)
+ hud._lastDt=dt
+ lastTime=now
+ local function guarded(name,fn,...)
+ local args={...}
+ local ok,err=xpcall(function()fn(table.unpack(args))end,
+ function(e)
+ return "[" .. name .. "]\n" ..
+(debug and debug.traceback and
+ debug.traceback(tostring(e),2)or tostring(e))
+ end)
+ if not ok then error(err,0)end
+ end
+ local nearCtx={
+ nearDoor=entity.getNearestDoor(),
+ nearPerk=entity.getNearestPerkMachine(),
+ nearBox=entity.getNearestMysteryBox(),
+ nearPaP=entity.getNearestPaP(),
+ nearWallWeapon=entity.getNearestWallWeapon(),
+ nearPower=entity.getNearestPowerSwitch(),
+ stamina=stamina,
+ isSprinting=isSprinting,
+ reviveHold=entity.reviveHold,
+}
+ local function isNearScriptBlock()
+ local md=world.loader and world.loader.currentMap
+ if not md or not md.scriptBlocks then return false end
+ for blockId,bd in pairs(md.scriptBlocks)do
+ local tag=bd.interactable
+ if tag and not tag._interactable then
+ elseif not bd.collected and bd.instances and bd.onInteract then
+ local radiusSq=tag and(tag._radius*tag._radius)or 9
+ for _,inst in ipairs(bd.instances)do
+ local ix=inst.x or inst[1]
+ local iz=inst.z or inst[3]
+ local dx=player.x-ix
+ local dz=player.z-iz
+ if dx*dx+dz*dz<radiusSq then return blockId end
+ end
+ end
+ end
+ return false
+ end
+ local nearScriptBlock=isNearScriptBlock()
+ nearCtx.nearScriptBlock=nearScriptBlock or nil
+ local hasPrompt=nearCtx.nearDoor or nearCtx.nearPerk or nearCtx.nearBox
+ or nearCtx.nearPaP or nearCtx.nearWallWeapon or nearCtx.nearPower
+ or nearScriptBlock
+ guarded("handleMovement",handleMovement,dt,hasPrompt)
+ guarded("weapon.updateFiring",weapon.updateFiring,dt)
+ guarded("entity.updateHolds",function()
+ entity.updatePurchaseHold(dt)
+ entity.updateReviveHold(dt)
+ end)
+ guarded("updateRoundFlow",updateRoundFlow,dt,now)
+ guarded("audio.update",audio.update,dt)
+ if player.inAfterlife then
+ local af=now-(player.afterlifeStartTime or now)
+ player.afterlifeTimeLeft=math.max(0,30-af)
+ if player.afterlifeTimeLeft<=0 then
+ gameState="gameover"
+ end
+ end
+ if player.isDowned then
+ local bl=now-(player.downedTime or now)
+ if bl>=(player.bleedoutTime or 30)then
+ if not entity.applySoloQuickRevive(world.getPerkMachines())then
+ gameState="gameover"
+ end
+ end
+ end
+ guarded("zombie.updateZombies",zombie.updateZombies,dt)
+ guarded("onMapUpdate",onMapUpdate,dt)
+ guarded("voxel.updateShake",voxel.updateShake,dt)
+ renderedObjects={}
+ guarded("world.renderMap",world.renderMap,renderedObjects)
+ guarded("world.renderEntities",function()
+ world.renderPerkMachines(renderedObjects)
+ world.renderPapMachines(renderedObjects)
+ world.renderPowerSwitches(renderedObjects)
+ world.renderMysteryBoxes(renderedObjects)
+ end)
+ guarded("zombie.renderAllZombies",zombie.renderAllZombies,renderedObjects)
+ guarded("voxel.renderZombies",voxel.renderZombies,zombies,dt)
+ guarded("frame.drawObjects",function()frame:drawObjects(renderedObjects)end)
+ guarded("frame.drawBuffer",function()frame:drawBuffer()end)
+ if player.isDowned then
+ local bl=now-(player.downedTime or now)
+ local prog=bl/(player.bleedoutTime or 30)
+ guarded("hud.applyDownedPalette",hud.applyDownedPalette,prog)
+ else
+ guarded("hud.reapplyMapPalette",hud.reapplyMapPalette)
+ end
+ guarded("hud.updateScreenFlash",hud.updateScreenFlash)
+ guarded("hud.drawHUD",hud.drawHUD,nearCtx)
+ guarded("audio.drawNowPlaying",audio.drawNowPlaying)
+ updateTimer=os.startTimer(0.05)
+ elseif event=="http_success" then
+ audio.onHttpSuccess(p1,p2)
+ elseif event=="http_failure" then
+ elseif event=="key" then
+ keysDown[p1]=true
+ keysJustPressed[p1]=true
+ if p1==cfg.key_pause then
+ gameState="paused"
+ pauseOption=1
+ elseif p1==cfg.key_sprint and cfg.sprintMode=="toggle" then
+ isSprinting=not isSprinting
+ elseif p1==cfg.key_interact then
+ local nearCtx2={
+ nearDoor=entity.getNearestDoor(),
+ nearPerk=entity.getNearestPerkMachine(),
+ nearBox=entity.getNearestMysteryBox(),
+ nearPaP=entity.getNearestPaP(),
+ nearWallWeapon=entity.getNearestWallWeapon(),
+ nearPower=entity.getNearestPowerSwitch(),
+}
+ handleInteractKey(nearCtx2)
+ elseif p1==cfg.key_melee then weapon.performMelee()
+ elseif p1==cfg.key_slot1 then weapon.switchSlot(1)
+ elseif p1==cfg.key_slot2 then weapon.switchSlot(2)
+ elseif p1==cfg.key_slot3 then weapon.switchSlot(3)
+ elseif p1==cfg.key_reload then weapon.reloadWeapon()
+ elseif p1==(cfg.key_eeSong or keys.k)then
+ if audio.isEESongPlaying and audio.isEESongPlaying()then
+ audio.stopEESong()
+ else
+ audio.startEESong()
+ end
+ end
+ elseif event=="key_up" then
+ keysDown[p1]=nil
+ if p1==cfg.key_interact then
+ entity.cancelPurchaseHold()
+ entity.reviveHold.active=false
+ entity.reviveHold.elapsed=0
+ end
+ elseif event=="mouse_click" and p1==1 then
+ player.firing=true
+ player.firedOnThisClick=false
+ elseif event=="mouse_up" and p1==1 then
+ player.firing=false
+ player.firedOnThisClick=false
+ elseif event=="terminate" then
+ return "quit"
+ end
+ end
+end
+local function runPauseMenu()
+ while gameState=="paused" do
+ local choice=menu.scrollMenu({
+ title="PAUSED",
+ allowBack=true,
+ items={
+{label="Resume",sub="Return to game"},
+{label="Settings",sub="Change settings"},
+{label="Quit",sub="Return to main menu",color=colors.red},
+},
+})
+ if not choice or choice==1 then
+ gameState="playing"
+ elseif choice==2 then
+ settings.showMenu()
+ elseif choice==3 then
+ hud.resetPaletteToDefaults()
+ audio.stopMenuMusic()
+ audio.stopEESong()
+ gameState="main_menu"
+ return
+ end
+ end
+end
+local function runGameOver()
+ hud.resetPaletteToDefaults()
+ hud.drawGameOver(world.loader.currentMap and world.loader.currentMap.name)
+ while true do
+ local ev,k=os.pullEvent("key")
+ if k==keys.enter or k==keys.space then break end
+ end
+ audio.startMenuMusic()
+ gameState="main_menu"
+end
+local function runMainMenu()
+ local action=menu.showMainMenu()
+ if action=="play" then
+ local playAction=menu.showPlayMenu()
+ if playAction=="solo" then
+ gameState="map_select"
+ end
+ elseif action=="character" then
+ local char=menu.showCharacterSelect()
+ if char then
+ P.character=char
+ player.character=char
+ settings.current.preferredCharacter=char.id
+ settings.save()
+ hud.clearGunCache()
+ end
+ elseif action=="settings" then
+ menu.showSettings(settings)
+ elseif action=="maps" then
+ gameState="dlc"
+ elseif action==nil then
+ audio.stopMenuMusic()
+ term.setBackgroundColor(colors.black);term.clear()
+ term.setCursorPos(1,1)
+ term.setTextColor(colors.white)
+ print("Thanks for playing CCZombies!")
+ sleep(1)
+ gameState="quit"
+ end
+end
+local function runMapSelect()
+ if#availableMaps==0 then
+ term.clear();term.setCursorPos(1,1)
+ term.setTextColor(colors.yellow)
+ print("No maps found. Go to 'Download Maps' to get some!")
+ hud.resetPaletteToDefaults();sleep(2);gameState="main_menu";return
+ end
+ local items={}
+ for _,m in ipairs(availableMaps)do
+ items[#items+1]={label=m.name,sub=m.description~="" and m.description or m.file}
+ end
+ local choice=menu.scrollMenu({
+ title="SELECT MAP",
+ allowBack=true,
+ items=items,
+ footer="ENTER - Start  ` - Back",
+})
+ if not choice then
+ gameState="main_menu"
+ else
+ initGame(choice)
+ end
+end
+local function startup()
+ term.setBackgroundColor(colors.black);term.clear()
+ settings.load()
+ cfg=settings.current
+ applyFOV()
+ P.loadUsername()
+ scanAvailableMaps()
+ audio.startMenuMusic()
+ initModules()
+end
+game.version=VERSION
+function game.run()
+ startup()
+ parallel.waitForAny(
+ audio.speakerLoop,
+ function()
+ while gameState~="quit" do
+ if gameState=="main_menu" then runMainMenu()
+ elseif gameState=="map_select" then runMapSelect()
+ elseif gameState=="playing" then gameLoop()
+ elseif gameState=="paused" then runPauseMenu()
+ elseif gameState=="gameover" then runGameOver()
+ elseif gameState=="dlc" then
+ dlc.handle()
+ gameState="main_menu"
+ end
+ end
+ end
+)
+ term.setBackgroundColor(colors.black)
+ term.setTextColor(colors.white)
+ term.clear();term.setCursorPos(1,1)
+end
+return game
