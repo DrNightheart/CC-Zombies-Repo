@@ -1,0 +1,2 @@
+CC:Zombies 0.5.
+Pretty simple, really. First ever version of CC:Zombies released to the public. Came bundled with CCZ_API and the launch map was Nacht Der Untoten
