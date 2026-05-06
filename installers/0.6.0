@@ -1,4 +1,7 @@
 --CC ZOMBIES 0.6 INSTALLER!@!!@!$@!32wr9ahfeofnaeunhfeuanfuenhfau
+local res = http.post("https://pinestore.cc/api/log/download", textutils.serialiseJSON({
+    projectId = 228,
+}), {["Content-Type"] = "application/json"})
 local VERSION    = "0.6"
 local BASE_URL   = "https://raw.githubusercontent.com/DrNightheart/CC-Zombies-Repo/refs/heads/main/0.6/"
 local PINE3D_CMD = "pastebin run qpJYiYs2"
