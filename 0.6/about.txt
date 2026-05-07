@@ -3,3 +3,4 @@ CC:Zombies 0.6 is the latest rendition of CC:Zombies. Its a FULL recode, meaning
 the entire game got restructured.
 New map is Nuketown 1975 with a minor easter egg. It is also the first canonical map for the main 4.
 Lore isnt actually in yet. Lore will come out in 1.0
+ 
