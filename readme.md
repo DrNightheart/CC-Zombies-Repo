@@ -41,7 +41,7 @@ settings!
 | Turn Right | `E` | `→` |
 | Look Up | `↑` | `←` |
 | Look Down | `↓` | `→` |
-| Shoot | `Space` | - |
+| Shoot | `Left Click` | - |
 | Interact | `E` | - |
 | Reload | `R` | - |
 | Switch Weapon | `1-3` | - |
