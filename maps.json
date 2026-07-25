@@ -1,0 +1,35 @@
+{
+  "maps": [
+    {
+      "name": "Nacht Der Untoten",
+      "file": "NachtDerUntoten.ccz",
+      "url": "https://raw.githubusercontent.com/DrNightheart/CC-Zombies-Repo/refs/heads/main/maps/NachtDerUntoten.ccz",
+      "thumbnail": "https://raw.githubusercontent.com/DrNightheart/CC-Zombies-Repo/refs/heads/main/maps/NachtDerUntoten.nfp",
+      "size": 18,
+      "description": "You brought them into the heart of the reich. You thought they were dead. You, were wrong.",
+      "author": "DrNightheart",
+      "version": "1.0"
+    },
+    {
+      "name": "Nuketown 1975",
+      "file": "Nuketown1975.ccz",
+      "url": "https://raw.githubusercontent.com/DrNightheart/CC-Zombies-Repo/refs/heads/main/maps/Nuketown1975.ccz",
+      "thumbnail": "https://raw.githubusercontent.com/DrNightheart/CC-Zombies-Repo/refs/heads/main/maps/Nuketown1975.nfp",
+      "size": 35,
+      "description": "Broken Arrow excavation site. Dont pull the switch!",
+      "author": "DrNightheart",
+      "version": "1.0"
+    }
+  ],
+  "mods": [
+    {
+      "name": "Dev Tools",
+      "modId": "ccz_devtools",
+      "url": "https://raw.githubusercontent.com/DrNightheart/CC-Zombies-Repo/refs/heads/main/mods/ccz_devtools/init.lua",
+      "size": 14,
+      "description": "Developer Mode",
+      "author": "DrNightheart",
+      "version": "0.5"
+    }
+  ]
+}
