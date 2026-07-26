@@ -175,18 +175,46 @@ commands.perk = {
 }
 
 commands.powerup = {
-    usage = "powerup <id>",
-    desc  = "Spawn a power-up at your feet (e.g. powerup_nuke)",
+    usage = "powerup <id> [distance]",
+    desc  = "Spawn a power-up at your feet, or [distance] blocks in front of you",
     run   = function(arg)
         if arg == "" then
-            print("Usage: powerup <id>, one of:")
+            print("Usage: powerup <id> [distance], one of:")
             print("  powerup_nuke, powerup_double_points, powerup_insta_kill,")
             print("  powerup_max_ammo, powerup_fire_sale, powerup_free_perk")
+            print("[distance] is optional, in blocks, straight ahead of your")
+            print("current facing direction (default: 0, spawns at your feet).")
             return
         end
+
+        local id, distArg = arg:match("^(%S+)%s*(%S*)$")
+        local dist = 0
+        if distArg ~= "" then
+            dist = tonumber(distArg)
+            if not dist then
+                print("Usage: powerup <id> [distance] - distance must be a number")
+                return
+            end
+        end
+
         local p = getPlayer()
-        local ok = ccz.modules.powerups.spawnAt(arg, p.x, p.y, p.z)
-        print(ok and ("Spawned " .. arg) or ("Unknown power-up: " .. arg))
+        local x, y, z = p.x, p.y, p.z
+        if dist ~= 0 then
+            local yaw = math.rad(p.rotY or 0)
+            x = x + math.cos(yaw) * dist
+            z = z + math.sin(yaw) * dist
+        end
+
+        local ok = ccz.modules.powerups.spawnAt(id, x, y, z)
+        if ok then
+            if dist ~= 0 then
+                print(("Spawned %s (%.1f blocks ahead)"):format(id, dist))
+            else
+                print("Spawned " .. id)
+            end
+        else
+            print("Unknown power-up: " .. id)
+        end
     end,
 }
 
