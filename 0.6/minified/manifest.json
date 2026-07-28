@@ -1,0 +1,207 @@
+{
+    "version": "0.6",
+    "base_url": "https://raw.githubusercontent.com/DrNightheart/CC-Zombies-Repo/main/0.6/minified",
+    "entry": "CCZombiesLauncher.lua",
+    "files": [
+        {
+            "path": "CCZombies/audio.lua",
+            "crc32": "d0d01168"
+        },
+        {
+            "path": "CCZombies/background.nfp",
+            "crc32": "ea38f6aa"
+        },
+        {
+            "path": "CCZombies/characters/AliceE.nfp",
+            "crc32": "1775be7c"
+        },
+        {
+            "path": "CCZombies/characters/Ariss_Nightheart.nfp",
+            "crc32": "fa861fa4"
+        },
+        {
+            "path": "CCZombies/characters/DrNightheart.nfp",
+            "crc32": "406da881"
+        },
+        {
+            "path": "CCZombies/characters/bayard.nfp",
+            "crc32": "5b3776c8"
+        },
+        {
+            "path": "CCZombies/dlc.lua",
+            "crc32": "01347241"
+        },
+        {
+            "path": "CCZombies/entity.lua",
+            "crc32": "0ad5b434"
+        },
+        {
+            "path": "CCZombies/game.lua",
+            "crc32": "07f9d53f"
+        },
+        {
+            "path": "CCZombies/hud.lua",
+            "crc32": "292fafef"
+        },
+        {
+            "path": "CCZombies/logo.nfp",
+            "crc32": "04341752"
+        },
+        {
+            "path": "CCZombies/menu.lua",
+            "crc32": "3f4ef66a"
+        },
+        {
+            "path": "CCZombies/nav.lua",
+            "crc32": "95bb91b1"
+        },
+        {
+            "path": "CCZombies/paths.lua",
+            "crc32": "beec8e08"
+        },
+        {
+            "path": "CCZombies/player.lua",
+            "crc32": "e3596965"
+        },
+        {
+            "path": "CCZombies/settings.lua",
+            "crc32": "88d90b03"
+        },
+        {
+            "path": "CCZombies/ui.lua",
+            "crc32": "eb899f46"
+        },
+        {
+            "path": "CCZombies/utilities.lua",
+            "crc32": "cf494d29"
+        },
+        {
+            "path": "CCZombies/voxel.lua",
+            "crc32": "585b3eda"
+        },
+        {
+            "path": "CCZombies/weapon.lua",
+            "crc32": "eab19ebf"
+        },
+        {
+            "path": "CCZombies/world.lua",
+            "crc32": "d7080ed8"
+        },
+        {
+            "path": "CCZombies/zombie.lua",
+            "crc32": "77ec5204"
+        },
+        {
+            "path": "CCZombiesLauncher.lua",
+            "crc32": "52cb01b8"
+        },
+        {
+            "path": "guns/ak47_AliceE.nfp",
+            "crc32": "72dba855"
+        },
+        {
+            "path": "guns/ak47_ArissNightheart.nfp",
+            "crc32": "183b5eeb"
+        },
+        {
+            "path": "guns/ak47_Bayard.nfp",
+            "crc32": "94056855"
+        },
+        {
+            "path": "guns/ak47_DrNightheart.nfp",
+            "crc32": "7fb33490"
+        },
+        {
+            "path": "guns/ballista_sniper_AliceE.nfp",
+            "crc32": "dd917556"
+        },
+        {
+            "path": "guns/ballista_sniper_ArissNightheart.nfp",
+            "crc32": "bcb41266"
+        },
+        {
+            "path": "guns/ballista_sniper_Bayard.nfp",
+            "crc32": "754abd59"
+        },
+        {
+            "path": "guns/ballista_sniper_DrNightheart.nfp",
+            "crc32": "5eed021a"
+        },
+        {
+            "path": "guns/m1911_AliceE.nfp",
+            "crc32": "c919070b"
+        },
+        {
+            "path": "guns/m1911_ArissNightheart.nfp",
+            "crc32": "ec00b486"
+        },
+        {
+            "path": "guns/m1911_Bayard.nfp",
+            "crc32": "4d9b4ee7"
+        },
+        {
+            "path": "guns/m1911_DrNightheart.nfp",
+            "crc32": "f93b832d"
+        },
+        {
+            "path": "guns/raygun_AliceE.nfp",
+            "crc32": "ef562584"
+        },
+        {
+            "path": "guns/raygun_ArissNightheart.nfp",
+            "crc32": "39515660"
+        },
+        {
+            "path": "guns/raygun_Bayard.nfp",
+            "crc32": "94ea132a"
+        },
+        {
+            "path": "guns/raygun_DrNightheart.nfp",
+            "crc32": "ab690286"
+        },
+        {
+            "path": "guns/standard_lmg_AliceE.nfp",
+            "crc32": "b744c50a"
+        },
+        {
+            "path": "guns/standard_lmg_ArissNightheart.nfp",
+            "crc32": "497e9c63"
+        },
+        {
+            "path": "guns/standard_lmg_Bayard.nfp",
+            "crc32": "484e1e2e"
+        },
+        {
+            "path": "guns/standard_lmg_DrNightheart.nfp",
+            "crc32": "8d575494"
+        },
+        {
+            "path": "guns/uzi_md_AliceE.nfp",
+            "crc32": "becbb0fd"
+        },
+        {
+            "path": "guns/uzi_md_ArissNightheart.nfp",
+            "crc32": "4af194fc"
+        },
+        {
+            "path": "guns/uzi_md_Bayard.nfp",
+            "crc32": "8990e7e4"
+        },
+        {
+            "path": "guns/uzi_md_DrNightheart.nfp",
+            "crc32": "a590614a"
+        },
+        {
+            "path": "maps/NachtDerUntoten.ccz",
+            "crc32": "59b130e7"
+        },
+        {
+            "path": "maps/Nuketown1975.ccz",
+            "crc32": "a8800e5f"
+        },
+        {
+            "path": "temp.txt",
+            "crc32": "fb43d253"
+        }
+    ]
+}
