@@ -1,6 +1,6 @@
 {
     "version": "0.6",
-    "base_url": "https://github.com/DrNightheart/CC-Zombies-Repo/edit/main/0.6/minified",
+    "base_url": "https://raw.githubusercontent.com/DrNightheart/CC-Zombies-Repo/main/0.6/minified/",
     "entry": "CCZombiesLauncher.lua",
     "files": [
         {
