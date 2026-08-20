@@ -1,0 +1,3 @@
+This is the directory for AUDIO files!
+These will be loaded by your game using the HTTP protocol. If it is off, it falls out silencly.
+silencly? how do i spell that.
